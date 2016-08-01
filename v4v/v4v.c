@@ -3,6 +3,8 @@
  *
  * V4V interdomain communication driver.
  *
+ * Modifications by Christopher Clark are Copyright (c) 2016 BAE Systems
+ * Modifications by Eric Chanudet are Copyright (c) 2016 Assured Info Security
  * Copyright (c) 2009 Ross Philipson
  * Copyright (c) 2009 James McKenzie
  * Copyright (c) 2009 Citrix Systems, Inc.
@@ -224,7 +226,6 @@ typedef enum
   V4V_STATE_CONNECTED,          /*this can only be held by the ring sponsor */
   V4V_STATE_DISCONNECTED
 } v4v_state;
-
 
 static rwlock_t list_lock;
 static struct list_head ring_list;
@@ -639,8 +640,8 @@ v4v_id_in_use (struct v4v_ring_id *id)
   list_for_each_entry (r, &ring_list, node)
   {
 
-    if ((r->ring->id.addr.port ==
-         id->addr.port) && (r->ring->id.partner == id->partner))
+    if ((r->ring->id.addr.port == id->addr.port) &&
+        (r->ring->id.partner == id->partner))
       return 1;
   }
 
@@ -1410,22 +1411,22 @@ v4v_notify (void)
 }
 
 /***********************  viptables ********************/
-static void
+static int
 v4v_viptables_add (struct v4v_private *p, struct v4v_viptables_rule* rule, int position)
 {
-  H_v4v_viptables_add (rule, position);
+  return H_v4v_viptables_add (rule, position);
 }
 
-static void
+static int
 v4v_viptables_del (struct v4v_private *p, struct v4v_viptables_rule* rule, int position)
 {
-  H_v4v_viptables_del (rule, position);
+  return H_v4v_viptables_del (rule, position);
 }
 
-static void
+static int
 v4v_viptables_list (struct v4v_private *p, struct v4v_viptables_list *rules_list)
 {
-  H_v4v_viptables_list (rules_list);
+  return H_v4v_viptables_list (rules_list);
 }
 
 
@@ -1992,7 +1993,7 @@ v4v_try_sendv_privates (struct v4v_private *p,
 
 static ssize_t
 v4v_sendto_from_sponsor (struct v4v_private *p,
-                         const void *buf, size_t len,
+                         const char __user *buf, size_t len,
                          int nonblock, v4v_addr_t * dest, uint32_t protocol)
 {
   size_t ret = 0, ts_ret;
@@ -2183,18 +2184,15 @@ v4v_stream_sendvto_from_private (struct v4v_private *p,
   return ret;
 }
 
-static int
+static void
 v4v_get_sock_type(struct v4v_private *p, int *type)
 {
 	*type = p->ptype;
-	return 0;
 }
 
-static int
+static void
 v4v_get_sock_name (struct v4v_private *p, struct v4v_ring_id *id)
 {
-  int rc = 0;
-
   v4v_read_lock (&list_lock);
   if ((p->r) && (p->r->ring))
     {
@@ -2208,8 +2206,6 @@ v4v_get_sock_name (struct v4v_private *p, struct v4v_ring_id *id)
 		(id->addr).port = 0;
     }
   v4v_read_unlock (&list_lock);
-
-  return rc;
 }
 
 static int
@@ -2259,7 +2255,7 @@ v4v_set_ring_size (struct v4v_private *p, uint32_t ring_size)
 
 
 static ssize_t
-v4v_recvfrom_dgram (struct v4v_private *p, void *buf, size_t len,
+v4v_recvfrom_dgram (struct v4v_private *p, char __user *buf, size_t len,
                     int nonblock, int peek, v4v_addr_t * src)
 {
   ssize_t ret;
@@ -2522,7 +2518,7 @@ v4v_recv_stream (struct v4v_private *p, void *_buf, int len, int recv_flags,
 
 
 static ssize_t
-v4v_send_stream (struct v4v_private *p, const void *_buf, int len,
+v4v_send_stream (struct v4v_private *p, const char __user *_buf, int len,
                  int nonblock)
 {
   int write_lump;
@@ -3089,15 +3085,13 @@ v4v_accept (struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 }
 
 
-ssize_t
-v4v_sendto (struct v4v_private * p, const void *buf, size_t len, int flags,
-            v4v_addr_t * addr, int nonblock)
+static ssize_t
+v4v_sendto (struct v4v_private * p, const char __user *buf, size_t len,
+            int flags, v4v_addr_t * addr, int nonblock)
 {
   ssize_t rc;
 
   if (!access_ok (VERIFY_READ, buf, len))
-    return -EFAULT;
-  if (!access_ok (VERIFY_READ, addr, sizeof(v4v_addr_t)))
     return -EFAULT;
 
 #ifdef V4V_DEBUG
@@ -3173,8 +3167,8 @@ v4v_sendto (struct v4v_private * p, const void *buf, size_t len, int flags,
 }
 
 
-ssize_t
-v4v_recvfrom (struct v4v_private * p, void *buf, size_t len, int flags,
+static ssize_t
+v4v_recvfrom (struct v4v_private * p, char __user *buf, size_t len, int flags,
               v4v_addr_t * addr, int nonblock)
 {
   int peek = 0;
@@ -3422,14 +3416,13 @@ v4v_read (struct file *f, char __user * buf, size_t count, loff_t * ppos)
   struct v4v_private *p = f->private_data;
   int nonblock = f->f_flags & O_NONBLOCK;
 
-  return v4v_recvfrom (p, (void *) buf, count, 0, NULL, nonblock);
+  return v4v_recvfrom (p, buf, count, 0, NULL, nonblock);
 }
 
 static long
 v4v_ioctl (struct file *f, unsigned int cmd, unsigned long arg)
 {
-  // void __user *p = (void __user *) arg;
-  // int len = _IOC_SIZE (cmd);
+  void __user *uarg = (void __user *) arg;
   int rc = -ENOTTY;
 
   int nonblock = f->f_flags & O_NONBLOCK;
@@ -3446,43 +3439,69 @@ v4v_ioctl (struct file *f, unsigned int cmd, unsigned long arg)
     {
     case V4VIOCSETRINGSIZE:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_READ, arg, sizeof (uint32_t)))
-        return -EFAULT;
-      rc = v4v_set_ring_size (p, *(uint32_t *) arg);
+      {
+        uint32_t ring_size;
+        if (get_user (ring_size, (uint32_t __user *)uarg))
+          return -EFAULT;
+        rc = v4v_set_ring_size (p, ring_size);
+      }
       break;
     case V4VIOCBIND:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_READ, arg, sizeof (struct v4v_ring_id)))
-        return -EFAULT;
-
-      DEBUG_APPLE;
-      rc = v4v_bind (p, (struct v4v_ring_id *) arg);
+      {
+        struct v4v_ring_id ring_id;
+        if (copy_from_user (&ring_id, uarg, sizeof(struct v4v_ring_id)))
+          return -EFAULT;
+        DEBUG_APPLE;
+        rc = v4v_bind (p, &ring_id);
+      }
       break;
     case V4VIOCGETSOCKNAME:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_WRITE, arg, sizeof (struct v4v_ring_id)))
+      if (!access_ok (VERIFY_WRITE, uarg, sizeof (struct v4v_ring_id)))
         return -EFAULT;
-      rc = v4v_get_sock_name (p, (struct v4v_ring_id *) arg);
+      {
+        struct v4v_ring_id ring_id;
+        v4v_get_sock_name (p, &ring_id);
+        if (copy_to_user (uarg, &ring_id, sizeof(struct v4v_ring_id)))
+          return -EFAULT;
+      }
+      rc = 0;
       break;
     case V4VIOCGETSOCKTYPE:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_WRITE, arg, sizeof (int)))
+      if (!access_ok (VERIFY_WRITE, uarg, sizeof (int)))
         return -EFAULT;
-      rc = v4v_get_sock_type (p, (int *) arg);
+      {
+        int sock_type;
+        v4v_get_sock_type (p, &sock_type);
+        if (put_user (sock_type, (int __user *)uarg))
+          return -EFAULT;
+      }
+      rc = 0;
       break;
     case V4VIOCGETPEERNAME:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_WRITE, arg, sizeof (v4v_addr_t)))
+      if (!access_ok (VERIFY_WRITE, uarg, sizeof (v4v_addr_t)))
         return -EFAULT;
-      rc = v4v_get_peer_name (p, (v4v_addr_t *) arg);
+      {
+        v4v_addr_t addr;
+        rc = v4v_get_peer_name (p, &addr);
+        if (rc)
+          return rc;
+        if (copy_to_user (uarg, &addr, sizeof(v4v_addr_t)))
+          return -EFAULT;
+      }
       break;
     case V4VIOCCONNECT:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_READ, arg, sizeof (v4v_addr_t)))
-        return -EFAULT;
-      //For for the lazy do a bind if it wasn't done
+      {
+        v4v_addr_t connect_addr;
+        if (copy_from_user (&connect_addr, uarg, sizeof(v4v_addr_t)))
+          return -EFAULT;
+        //For for the lazy do a bind if it wasn't done
 
-      if (p->state == V4V_STATE_IDLE)
+        if (p->state == V4V_STATE_IDLE)
         {
           struct v4v_ring_id id;
           memset (&id, 0, sizeof (id));
@@ -3493,20 +3512,24 @@ v4v_ioctl (struct file *f, unsigned int cmd, unsigned long arg)
           if (rc)
             break;
         }
-      rc = v4v_connect (p, (v4v_addr_t *) arg, nonblock);
+        rc = v4v_connect (p, &connect_addr, nonblock);
+      }
       break;
     case V4VIOCGETCONNECTERR:
       {
         unsigned long flags;
-        if (!access_ok (VERIFY_WRITE, arg, sizeof (int)))
+        if (!access_ok (VERIFY_WRITE, uarg, sizeof (int)))
           return -EFAULT;
         DEBUG_APPLE;
 
         v4v_spin_lock_irqsave (&p->pending_recv_lock, flags);
-        *(int *) arg = p->pending_error;
-        p->pending_error = 0;
+        if (copy_to_user (uarg, &p->pending_error, sizeof(int)))
+          rc = -EFAULT;
+        else {
+          p->pending_error = 0;
+          rc = 0;
+        }
         v4v_spin_unlock_irqrestore (&p->pending_recv_lock, flags);
-        rc = 0;
         DEBUG_APPLE;
       }
       break;
@@ -3516,58 +3539,89 @@ v4v_ioctl (struct file *f, unsigned int cmd, unsigned long arg)
       break;
     case V4VIOCACCEPT:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_WRITE, arg, sizeof (v4v_addr_t)))
-        return -EFAULT;
-      rc = v4v_accept (p, (v4v_addr_t *) arg, nonblock);
-      break;
-    case V4VIOCSEND:
-      if (!access_ok (VERIFY_READ, arg, sizeof (struct v4v_dev)))
+      if (!access_ok (VERIFY_WRITE, uarg, sizeof (v4v_addr_t)))
         return -EFAULT;
       {
-        struct v4v_dev a = *(struct v4v_dev *) arg;
-        DEBUG_APPLE;
-        rc = v4v_sendto (p, a.buf, a.len, a.flags, a.addr, nonblock);
+        v4v_addr_t addr;
+        rc = v4v_accept (p, &addr, nonblock);
+        if (rc < 0)
+          return rc;
+        if (copy_to_user (uarg, &addr, sizeof(v4v_addr_t)))
+          return -EFAULT;
+      }
+      break;
+    case V4VIOCSEND:
+      {
+        struct v4v_dev a;
+        v4v_addr_t addr;
+        if (copy_from_user (&a, uarg, sizeof(struct v4v_dev)))
+          return -EFAULT;
+
+        if (a.addr) {
+          if (copy_from_user (&addr, (void __user*)a.addr, sizeof(v4v_addr_t)))
+            return -EFAULT;
+          DEBUG_APPLE;
+          rc = v4v_sendto (p, a.buf, a.len, a.flags, &addr, nonblock);
+        } else {
+          DEBUG_APPLE;
+          rc = v4v_sendto (p, a.buf, a.len, a.flags, NULL, nonblock);
+        }
       }
       break;
     case V4VIOCRECV:
       DEBUG_APPLE;
-      if (!access_ok (VERIFY_READ, arg, sizeof (struct v4v_dev)))
-        return -EFAULT;
       {
-        struct v4v_dev a = *(struct v4v_dev *) arg;
-        rc = v4v_recvfrom (p, a.buf, a.len, a.flags, a.addr, nonblock);
+        struct v4v_dev a;
+        v4v_addr_t addr;
+        if (copy_from_user (&a, uarg, sizeof(struct v4v_dev)))
+          return -EFAULT;
+        if (a.addr) {
+            if (copy_from_user (&addr, a.addr, sizeof(v4v_addr_t)))
+              return -EFAULT;
+            rc = v4v_recvfrom (p, a.buf, a.len, a.flags, &addr, nonblock);
+        } else
+            rc = v4v_recvfrom (p, a.buf, a.len, a.flags, NULL, nonblock);
       }
       break;
     case V4VIOCVIPTABLESADD:
-      if (!access_ok (VERIFY_READ, arg, sizeof (struct v4v_viptables_rule_pos)))
-	return -EFAULT;
       {
-	struct v4v_viptables_rule_pos *rule =
-	  (struct v4v_viptables_rule_pos *) arg;
-	v4v_viptables_add (p, rule->rule, rule->position);
-	rc = 0;
+        struct v4v_viptables_rule_pos rule_pos;
+        struct v4v_viptables_rule rule;
+        if (copy_from_user (&rule_pos, uarg, sizeof(struct v4v_viptables_rule_pos)))
+          return -EFAULT;
+        if (copy_from_user (&rule, rule_pos.rule, sizeof(struct v4v_viptables_rule)))
+          return -EFAULT;
+        rc = v4v_viptables_add (p, &rule, rule_pos.position);
       }
       break;
     case V4VIOCVIPTABLESDEL:
-      if (!access_ok (VERIFY_READ, arg, sizeof (struct v4v_viptables_rule_pos)))
-	return -EFAULT;
       {
-	struct v4v_viptables_rule_pos *rule =
-	  (struct v4v_viptables_rule_pos *) arg;
-	v4v_viptables_del (p, rule->rule, rule->position);
-	rc = 0;
+        struct v4v_viptables_rule_pos rule_pos;
+        struct v4v_viptables_rule rule;
+        if (copy_from_user (&rule_pos, uarg, sizeof(struct v4v_viptables_rule_pos)))
+          return -EFAULT;
+        if (copy_from_user (&rule, rule_pos.rule, sizeof(struct v4v_viptables_rule)))
+          return -EFAULT;
+        rc = v4v_viptables_del (p, &rule, rule_pos.position);
       }
       break;
     case V4VIOCVIPTABLESLIST:
       {
-          struct v4v_viptables_list *rules_list =
-              (struct v4v_viptables_list *) arg;
-          v4v_viptables_list(p, rules_list);
-          rc = 0;
+        struct v4v_viptables_list rules_list;
+        if (!access_ok (VERIFY_WRITE, uarg, sizeof (struct v4v_viptables_list)))
+          return -EFAULT;
+        if (get_user(rules_list.nb_rules,
+                     &((struct v4v_viptables_list *)uarg)->nb_rules))
+          return -EFAULT;
+        rc = v4v_viptables_list(p, &rules_list);
+        if (rc)
+          return rc;
+        if (copy_to_user (uarg, &rules_list, sizeof(struct v4v_viptables_list)))
+          return -EFAULT;
       }
       break;
     default:
-      printk (KERN_ERR "unkown ioctl: V4VIOCACCEPT=%x\n", V4VIOCACCEPT);
+      printk (KERN_ERR "Unknown ioctl: cmd=%x\n", cmd);
       DEBUG_BANANA;
     }
   DEBUG_APPLE;
