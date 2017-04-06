@@ -13,12 +13,9 @@ libv4v
 %setup -q
 
 %build
-libtoolize --force
-aclocal
-autoheader
-automake --force-missing --add-missing
-autoconf
-./configure
+mkdir -p m4
+autoreconf -i
+./configure --prefix=/usr/local CFLAGS="-I./src/" CPPFLAGS="-I./src/"
 make
 
 %install
