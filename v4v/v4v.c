@@ -33,9 +33,7 @@
  */
 
 #include <linux/version.h>
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33) )
 #undef XC_KERNEL
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33) */
 
 #ifndef CONFIG_PARAVIRT
 #define CONFIG_PARAVIRT
@@ -1828,31 +1826,18 @@ static struct vfsmount *v4v_mnt = NULL;
 static const struct file_operations v4v_fops_stream;
 static const struct dentry_operations v4vfs_dentry_operations;
 
-#if ( LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,37) ) /* get_sb_pseudo */
-static int
-v4vfs_get_sb (struct file_system_type *fs_type, int flags,
-              const char *dev_name, void *data, struct vfsmount *mnt)
-{
-  return get_sb_pseudo (fs_type, "v4v:", NULL, V4VFS_MAGIC, mnt);
-}
-#else
 static struct dentry *
 v4vfs_mount_pseudo(struct file_system_type *fs_type, int flags,
 		const char *dev_name, void *data)
 {
   return mount_pseudo(fs_type, "v4v:", NULL, &v4vfs_dentry_operations, V4VFS_MAGIC);
 }
-#endif /* 2.6.37 get_sb_pseudo */
 
 
 static struct file_system_type v4v_fs = {
   /* No owner field so module can be unloaded */
   .name = "v4vfs",
-#if ( LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,37) ) /* get_sb_pseudo */
-  .get_sb = v4vfs_get_sb,
-#else
   .mount = v4vfs_mount_pseudo,
-#endif /* 2.6.37 get_sb_pseudo */
   .kill_sb = kill_litter_super
 };
 
@@ -2836,7 +2821,9 @@ v4v_connect (struct v4v_private *p, v4v_addr_t * peer, int nonblock)
 #else
   timer_setup(&p->to, respite, 0);
 #endif
-  mod_timer(&p->to, jiffies + msecs_to_jiffies(5000));          /* Default 5 seconds (in jiffies). A sysfs interface would be nice though. */
+
+  /* Default 5 seconds (in jiffies). A sysfs interface would be nice though. */
+  mod_timer(&p->to, jiffies + msecs_to_jiffies(5000));  
 
   while (p->state != V4V_STATE_CONNECTED)
     {
@@ -2885,11 +2872,9 @@ allocate_fd_with_private (void *private)
 {
   int fd;
   struct file *f;
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38) )
   struct qstr name = { .name = "" };
   struct path path;
   struct inode *ind;
-#endif
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0))
   fd = get_unused_fd();
@@ -2899,12 +2884,13 @@ allocate_fd_with_private (void *private)
   if (fd < 0)
     return fd;
 
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38) )
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0) )
   path.dentry = d_alloc_pseudo(v4v_mnt->mnt_sb, &name);
   if (unlikely(!path.dentry)) {
       put_unused_fd(fd);
       return -ENOMEM;
   }
+#endif
   ind = new_inode(v4v_mnt->mnt_sb);
   ind->i_ino = get_next_ino();
   ind->i_fop = v4v_mnt->mnt_root->d_inode->i_fop;
@@ -2912,21 +2898,18 @@ allocate_fd_with_private (void *private)
   ind->i_mode =  v4v_mnt->mnt_root->d_inode->i_mode;
   ind->i_uid = current_fsuid();
   ind->i_gid = current_fsgid();
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0) )
   d_instantiate(path.dentry, ind);
 
   path.mnt = mntget(v4v_mnt);
+#endif
 
   DEBUG_APPLE;
-  f =
-    alloc_file (&path,
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0) )
+  f = alloc_file(&path, FMODE_READ | FMODE_WRITE, &v4v_fops_stream);
 #else
-  f =
-    alloc_file (v4v_mnt,
+  f = alloc_file_pseudo (ind, v4v_mnt, "", O_RDWR, &v4v_fops_stream);
 #endif
-#if ( LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,32) ) /* alloc_file */
-                dget (v4v_mnt->mnt_root),
-#endif
-                FMODE_READ | FMODE_WRITE, &v4v_fops_stream);
   if (!f)
     {
       //FIXME putback fd?
@@ -2935,8 +2918,9 @@ allocate_fd_with_private (void *private)
 
 
   f->private_data = private;
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0) )
   f->f_flags = O_RDWR;
-
+#endif
   fd_install (fd, f);
 
   return fd;
