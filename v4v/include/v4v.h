@@ -55,7 +55,7 @@
 #endif /* XC_KERNEL */
 
 #ifndef HYPERVISOR_v4v_op
-#define __HYPERVISOR_v4v_op               39
+#define __HYPERVISOR_v4v_op               43
 static inline int __must_check
 HYPERVISOR_v4v_op(int cmd, void *arg1, void *arg2, void *arg3,
 			uint32_t arg4, uint32_t arg5)
@@ -71,7 +71,7 @@ HYPERVISOR_v4v_op(int cmd, void *arg1, void *arg2, void *arg3,
 #endif
 
 #ifndef VIRQ_V4V
-#define VIRQ_V4V        11 /* G. (DOM0) V4V event */
+#define VIRQ_V4V        14 /* G. (DOM0) V4V event */
 #endif
 
 #undef DOMID_INVALID
